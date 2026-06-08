@@ -293,30 +293,27 @@ class IslandShopBase(Island, WarehouseOCR):
     # ============ 核心逻辑 ============
 
     def _compute_base_demands(self):
-        """计算基础需求：按槽位顺序处理，同名餐品后续槽位只补差额。
+        """计算基础需求：严格按槽位顺序处理，找到第一个有缺口的槽位
+        即停止，后续槽位本轮不处理。
 
-        将结果写入 self.to_post_products 并更新 self.current_totals
-        为满足所有阶段最高目标后的剩余库存。
+        将结果写入 self.to_post_products 并更新 self.current_totals。
         """
         # ============ 基础需求计算 ============
         logger.info("阶段：基础需求")
 
         self.to_post_products = {}
-        # virtual_totals 用于模拟按槽位顺序扣除库存后的剩余值，
-        # 确保同名餐品的后续槽位只补差额，不重复计算已分配给前序槽位的库存
         virtual_totals = dict(self.current_totals)
 
+        # 遍历槽位，找到第一个有缺口的就只处理它
         for name, target in self.post_products:
             current = virtual_totals.get(name, 0)
             if current < target:
                 deficit = target - current
-                if name in self.to_post_products:
-                    self.to_post_products[name] += deficit
-                else:
-                    self.to_post_products[name] = deficit
+                self.to_post_products[name] = deficit
                 virtual_totals[name] = target
+                break
 
-        # 更新 current_totals 为满足所有阶段最高目标后的剩余库存
+        # 更新 current_totals 为满足全部槽位最高目标后的剩余库存
         max_targets = {}
         for name, target in self.post_products:
             max_targets[name] = max(max_targets.get(name, 0), target)
