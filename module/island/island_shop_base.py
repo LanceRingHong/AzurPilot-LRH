@@ -297,6 +297,11 @@ class IslandShopBase(Island, WarehouseOCR):
         即停止，后续槽位本轮不处理。
 
         将结果写入 self.to_post_products 并更新 self.current_totals。
+
+        注意：to_post_products 只包含第一个未满足槽位的缺口，
+        但 current_totals 会推进到全部槽位中该产品的最高目标——
+        这是有意设计的"保留线"机制，确保前序槽位的达标库存
+        不被后续槽位作为原料消耗。
         """
         # ============ 基础需求计算 ============
         logger.info("阶段：基础需求")
