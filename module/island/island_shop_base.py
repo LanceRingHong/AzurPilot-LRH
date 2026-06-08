@@ -700,29 +700,34 @@ class IslandShopBase(Island, WarehouseOCR):
         # 非常驻餐品模式：处理所有产品需求
         products_to_process = list(self.to_post_products.items())
 
-        # 如果有多个产品需求，按优先级排序
+        # 如果有多个产品需求，按槽位顺序排序（原料优先）
         if len(products_to_process) > 1:
-            def production_priority(item):
-                product, quantity = item
-                if product in self.meal_compositions:
-                    # 检查套餐原材料是否充足
-                    max_producible = self.get_max_producible(product, min(6, quantity))
-                    if max_producible > 0:
-                        return 0  # 最高优先级：可立即生产的套餐
-                    else:
-                        return 2  # 低优先级：原材料不足的套餐
-                else:
-                    # 基础餐品：检查是否可以生产
-                    max_producible = self.get_max_producible(product, min(6, quantity))
-                    if max_producible > 0:
-                        return 1  # 中等优先级：可生产的基础餐品
-                    else:
-                        return 3  # 最低优先级：无法生产的基础餐品
+            # 构建槽位顺序映射
+            slot_index = {}
+            idx = 0
+            for name, _ in self.post_products:
+                if name not in slot_index:
+                    slot_index[name] = idx
+                    idx += 1
 
-            products_to_process = sorted(products_to_process, key=production_priority)
+            # 原料取其服务套餐中最早槽位的索引
+            for meal, comp in self.meal_compositions.items():
+                if meal in slot_index:
+                    meal_slot = slot_index[meal]
+                    for mat in comp['required']:
+                        if mat not in slot_index or slot_index[mat] > meal_slot:
+                            slot_index[mat] = meal_slot
 
-        # 记录无法生产的产品
-        products_removed = []
+            # 按槽位顺序排序，同槽位内原料优先于成品
+            post_product_names = {name for name, _ in self.post_products}
+
+            def slot_priority(item):
+                product, _ = item
+                slot = slot_index.get(product, 999)
+                is_material = product not in post_product_names
+                return (slot, 0 if is_material else 1)
+
+            products_to_process.sort(key=slot_priority)
 
         # 为每个空闲岗位分配生产任务
         post_index = 0
@@ -747,12 +752,8 @@ class IslandShopBase(Island, WarehouseOCR):
                 max_producible = self.get_max_producible(product, min(6, remaining_need))
 
                 if max_producible <= 0:
-                    logger.warning(f"生产 {product} 的材料不足，从生产计划中移除")
-                    products_removed.append(product)
-                    # 从生产计划中移除该产品
-                    if product in self.to_post_products:
-                        del self.to_post_products[product]
-                    break  # 跳出当前产品的生产循环
+                    logger.info(f"生产 {product} 的材料暂时不足，保留在计划中等待下一轮")
+                    break  # 跳过当前产品，但保留在 to_post_products 中
 
                 # 分配生产
                 post_num = post_id[-1]
@@ -763,12 +764,8 @@ class IslandShopBase(Island, WarehouseOCR):
 
                 # 如果实际生产数量为0，说明原料不足
                 if actual_number == 0:
-                    logger.warning(f"生产 {product} 时检测到原料不足，从生产计划中移除")
-                    products_removed.append(product)
-                    # 从生产计划中移除该产品
-                    if product in self.to_post_products:
-                        del self.to_post_products[product]
-                    break  # 跳出当前产品的生产循环
+                    logger.info(f"生产 {product} 时检测到原料不足，保留在计划中等待下一轮")
+                    break  # 跳过当前产品，但保留在 to_post_products 中
 
                 # 更新需求
                 if product in self.to_post_products:
@@ -785,9 +782,6 @@ class IslandShopBase(Island, WarehouseOCR):
             # 如果所有岗位都已分配，退出循环
             if post_index >= total_idle_posts:
                 break
-
-        if products_removed:
-            logger.warning(f"以下产品因原料不足已从生产计划中移除: {products_removed}")
 
         if self.to_post_products:
             logger.info(f"生产安排完成，剩余需求: {self.to_post_products}")
