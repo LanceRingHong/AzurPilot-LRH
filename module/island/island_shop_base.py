@@ -719,12 +719,15 @@ class IslandShopBase(Island, WarehouseOCR):
                             slot_index[mat] = meal_slot
 
             # 按槽位顺序排序，同槽位内原料优先于成品
-            post_product_names = {name for name, _ in self.post_products}
+            # 从套餐组成中提取所有原料名，避免双重身份产品被误判为非原料
+            material_names = set()
+            for comp in self.meal_compositions.values():
+                material_names.update(comp['required'])
 
             def slot_priority(item):
                 product, _ = item
                 slot = slot_index.get(product, 999)
-                is_material = product not in post_product_names
+                is_material = product in material_names
                 return (slot, 0 if is_material else 1)
 
             products_to_process.sort(key=slot_priority)
