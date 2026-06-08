@@ -724,9 +724,12 @@ class IslandShopBase(Island, WarehouseOCR):
             for comp in self.meal_compositions.values():
                 material_names.update(comp['required'])
 
+            # 未在 slot_index 中的产品默认排在已知槽位之后
+            default_slot = len(slot_index) + 1
+
             def slot_priority(item):
                 product, _ = item
-                slot = slot_index.get(product, 999)
+                slot = slot_index.get(product, default_slot)
                 is_material = product in material_names
                 return (slot, 0 if is_material else 1)
 
