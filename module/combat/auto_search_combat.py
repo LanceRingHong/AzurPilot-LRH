@@ -13,6 +13,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
     _auto_search_in_stage_timer = Timer(3, count=6)
     _auto_search_status_confirm = False
     _withdraw = False
+    _withdraw_timeout = Timer(30)
     auto_search_oil_limit_triggered = False
     auto_search_coin_limit_triggered = False
 
@@ -213,6 +214,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             out: combat status
         """
         logger.info('Auto search combat loading')
+        self._withdraw = False
         self.device.stuck_record_clear()
         self.device.click_record_clear()
         self.device.screenshot_interval_set('combat')
@@ -328,17 +330,60 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             # End
             if self.is_auto_search_running():
                 self._auto_search_status_confirm = False
+                self._withdraw = False
+                self._withdraw_timeout.clear()
                 break
             if self.is_in_auto_search_menu() or self._handle_auto_search_menu_missing():
+                self._withdraw = False
+                self._withdraw_timeout.clear()
                 raise CampaignEnd
+
+            # 通用弹窗处理——放在撤退分支之前，
+            # 确保撤退等待期间弹窗也能被正常关闭。
+            if self.handle_get_ship():
+                continue
+            if self.handle_popup_confirm('AUTO_SEARCH_COMBAT_STATUS'):
+                continue
+            if self.handle_urgent_commission():
+                continue
+            if self.handle_story_skip():
+                continue
+            if self.handle_guild_popup_cancel():
+                continue
+            if self.handle_vote_popup():
+                continue
+            if self.handle_mission_popup_ack():
+                continue
 
             # Withdraw
             if self._withdraw:
-                if self.appear_then_click(FLEET_SWITCH_CONFIRM, offset=(30, 30)):
-                    self.fleet_alive_multiple = False
-                    self._withdraw = False
+                # 心跳：将 BATTLE_STATUS_S 注册到 detect_record，
+                # 将卡死超时从 60 秒延长到 195 秒。
+                self.appear(BATTLE_STATUS_S)
+
+                # 启动撤退超时计时器
+                if not self._withdraw_timeout.started():
+                    self._withdraw_timeout.reset()
+
+                # 舰队切换确认弹窗——仅在用户不期望直接撤退时才处理。
+                # 当 Campaign_DefeatWithdraw 为 True 时，跳过此弹窗，
+                # 继续等待撤退按钮出现。
+                if not self.config.Campaign_DefeatWithdraw:
+                    if self.appear_then_click(FLEET_SWITCH_CONFIRM, offset=(30, 30)):
+                        self.fleet_alive_multiple = False
+                        self._withdraw = False
+                        self._withdraw_timeout.clear()
+                        continue
+
+                # 超时升级：30 秒后仍未出现撤退按钮，重新点击
+                # OPTS_INFO_D 尝试推进画面。
+                if self._withdraw_timeout.reached():
+                    logger.warning('撤退等待超时，重新点击 OPTS_INFO_D')
+                    self.device.click(OPTS_INFO_D)
+                    self._withdraw_timeout.reset()
                     continue
-                
+
+                # WITHDRAW 按钮稳定检测
                 if self.appear(WITHDRAW, offset=(30, 30)):
                     if not withdraw_stable_timer.reached():
                         continue
@@ -346,11 +391,15 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                     withdraw_stable_timer.reset()
                     continue
 
+                # 撤退按钮已稳定出现，执行撤退决策。
                 self._withdraw = False
+                self._withdraw_timeout.clear()
                 if self.config.Campaign_DefeatWithdraw or not self.fleet_alive_multiple:
+                    # 开启了道中战斗失败撤退，或没有第二舰队可接管 → 直接撤退
                     self.withdraw()
                     break
                 else:
+                    # 关闭了撤退选项且有多舰队 → 尝试切换舰队接管
                     while True:
                         self.device.screenshot()
                         if self.appear_then_click(FLEET_WITHDRAW, offset=(30, 30)):
@@ -364,23 +413,8 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                     continue
 
             # Combat status
-            if self.handle_get_ship():
-                continue
             if not self._withdraw and self.handle_auto_search_map_option():
                 self._auto_search_status_confirm = False
-                continue
-            # bunch of popup handlers
-            if self.handle_popup_confirm('AUTO_SEARCH_COMBAT_STATUS'):
-                continue
-            if self.handle_urgent_commission():
-                continue
-            if self.handle_story_skip():
-                continue
-            if self.handle_guild_popup_cancel():
-                continue
-            if self.handle_vote_popup():
-                continue
-            if self.handle_mission_popup_ack():
                 continue
 
             # Handle low emotion combat
