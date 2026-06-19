@@ -215,6 +215,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         """
         logger.info('Auto search combat loading')
         self._withdraw = False
+        self._withdraw_timeout.clear()
         self.device.stuck_record_clear()
         self.device.click_record_clear()
         self.device.screenshot_interval_set('combat')
